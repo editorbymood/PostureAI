@@ -179,7 +179,18 @@ function drawPersonLabel(person) {
     
     ctx.fillStyle = 'rgba(10, 12, 16, 0.85)';
     ctx.beginPath();
-    ctx.roundRect(nose.x - tw/2, nose.y - 40, tw, 20, 4);
+    // Polyfill for roundRect (not supported in all browsers)
+    if (ctx.roundRect) {
+        ctx.roundRect(nose.x - tw/2, nose.y - 40, tw, 20, 4);
+    } else {
+        const x = nose.x - tw/2, y = nose.y - 40, w = tw, h = 20, r = 4;
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+    }
     ctx.fill();
     ctx.strokeStyle = person.color.primary;
     ctx.lineWidth = 1.5;
@@ -236,6 +247,7 @@ function updatePersonCards(persons) {
 
     DOM.personCardsContainer.innerHTML = persons.map(p => {
         const pred = p.lastPrediction;
+        if (!pred) return ''; // Safety: skip if no prediction yet
         const score = pred.score;
         const isGood = pred.classIndex === 0;
 
@@ -271,6 +283,12 @@ function updateGlobalStats(persons) {
     const avgScore = persons.reduce((s, p) => s + (p.lastPrediction?.score || 0), 0) / persons.length;
     const totalAlerts = persons.reduce((s, p) => s + p.alertCount, 0);
 
+    // Calculate good posture percentage across all persons
+    const totalFrames = persons.reduce((s, p) => s + p.totalFrames, 0);
+    const goodFrames = persons.reduce((s, p) => s + p.goodFrames, 0);
+    const goodPct = totalFrames > 0 ? Math.round((goodFrames / totalFrames) * 100) : 0;
+
+    if (DOM.globalGoodPct) DOM.globalGoodPct.textContent = goodPct + '%';
     if (DOM.globalAvgScore) DOM.globalAvgScore.textContent = Math.round(avgScore);
     if (DOM.globalAlerts) DOM.globalAlerts.textContent = totalAlerts;
 }
@@ -330,8 +348,19 @@ DOM.startBtn.addEventListener('click', async () => {
 
         renderLoop();
     } catch (err) {
-        console.error(err);
+        console.error('Initialization failed:', err);
+        DOM.loadingOverlay.classList.add('hidden');
         DOM.statusDot.className = 'dot dot-standby';
+        DOM.statusText.textContent = 'Error — check camera';
+        
+        // Show error state in banner
+        DOM.postureIcon.textContent = '🚫';
+        DOM.postureMsg.textContent = err.name === 'NotAllowedError'
+            ? 'Camera permission denied. Please allow camera access and refresh.'
+            : 'Failed to initialize. Check camera and refresh.';
+        
+        // Re-show start prompt so user can retry
+        DOM.startPrompt.classList.remove('hidden');
     }
 });
 

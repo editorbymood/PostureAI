@@ -20,15 +20,19 @@ export class APIClient {
     /** Check if backend is reachable */
     async checkConnection() {
         try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 3000);
             const start = performance.now();
             const res = await fetch(`${this.baseUrl}/health`, {
                 method: 'GET',
-                signal: AbortSignal.timeout(3000),
+                signal: controller.signal,
             });
+            clearTimeout(timeout);
             this.latency = Math.round(performance.now() - start);
             this.isConnected = res.ok;
             return this.isConnected;
         } catch {
+            // Silently handle — backend may not be running (standalone mode)
             this.isConnected = false;
             return false;
         }
@@ -53,6 +57,8 @@ export class APIClient {
     async classify(window, calibration = null) {
         if (!this.isConnected) return null;
         try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 5000);
             const start = performance.now();
             const res = await fetch(`${this.baseUrl}/predict`, {
                 method: 'POST',
@@ -62,8 +68,9 @@ export class APIClient {
                     calibration: calibration,
                     timestamp: Date.now(),
                 }),
-                signal: AbortSignal.timeout(5000),
+                signal: controller.signal,
             });
+            clearTimeout(timeout);
             this.latency = Math.round(performance.now() - start);
             if (!res.ok) return null;
             return await res.json();

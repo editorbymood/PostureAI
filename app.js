@@ -48,7 +48,7 @@ const CONFIG = {
         architecture:   'MobileNetV1',
         imageScaleFactor: 0.3,
         outputStride:   16,
-        flipHorizontal: true,          // Mirror the webcam
+        flipHorizontal: true,          // ml5.js PoseNet needs this to mirror keypoints
         minConfidence:  0.2,
         maxPoseDetections: 1,
         scoreThreshold: 0.5,
@@ -66,12 +66,15 @@ const CONFIG = {
 
     // Skeleton drawing
     draw: {
-        keypointRadius: 6,
+        keypointRadius: 7,
         keypointColor:  '#6366f1',
         skeletonColor:  'rgba(129,140,248,0.5)',
-        skeletonWidth:  2,
+        skeletonWidth:  2.5,
         goodColor:      '#22c55e',
         badColor:       '#ef4444',
+        warningColor:   '#f59e0b',
+        labelFont:      '600 10px "Inter", "SF Pro", system-ui, sans-serif',
+        hudFont:        '500 11px "JetBrains Mono", "Fira Code", monospace',
     },
 
     // Scoring
@@ -162,6 +165,12 @@ async function setupCamera() {
 
         return new Promise(resolve => {
             DOM.webcam.onloadedmetadata = () => {
+                // CRITICAL: Set video element width/height attributes explicitly.
+                // ml5.js PoseNet reads these to compute keypoint pixel coordinates.
+                // If they are 0 or unset, all keypoints will have (x:0, y:0).
+                DOM.webcam.width  = DOM.webcam.videoWidth;
+                DOM.webcam.height = DOM.webcam.videoHeight;
+
                 // Match canvas to video dimensions
                 DOM.canvas.width  = DOM.webcam.videoWidth;
                 DOM.canvas.height = DOM.webcam.videoHeight;
@@ -255,9 +264,10 @@ function renderLoop() {
         const kps = state.currentPose.keypoints;
         const posture = analyzePosture(kps);
 
-        // Draw skeleton & keypoints
-        drawSkeleton(kps, posture);
-        drawKeypoints(kps, posture);
+        // Draw ML visualization layers (order matters)
+        drawSkeleton(kps, posture);      // Bones + angle annotations
+        drawKeypoints(kps, posture);      // Joints with confidence rings
+        drawDataHUD(kps, posture);        // Real-time ML data overlay
 
         // Update all UI panels
         updatePostureBanner(posture);
@@ -272,36 +282,97 @@ function renderLoop() {
 }
 
 /**
- * Draw circles at each detected keypoint.
+ * Draw circles at each detected keypoint with confidence-based styling.
+ * Professional ML visualization: glow effects, confidence rings, labels.
  */
 function drawKeypoints(keypoints, posture) {
     const color = posture.isGood ? CONFIG.draw.goodColor : CONFIG.draw.badColor;
+    const warnColor = CONFIG.draw.warningColor;
+    const KP_LABELS = [
+        'nose','lEye','rEye','lEar','rEar',
+        'lShldr','rShldr','lElbow','rElbow',
+        'lWrist','rWrist','lHip','rHip',
+        'lKnee','rKnee','lAnkle','rAnkle'
+    ];
 
-    keypoints.forEach(kp => {
+    keypoints.forEach((kp, i) => {
         if (kp.score > CONFIG.poseNet.minConfidence) {
-            ctx.beginPath();
-            ctx.arc(kp.position.x, kp.position.y, CONFIG.draw.keypointRadius, 0, Math.PI * 2);
-            ctx.fillStyle = color;
-            ctx.shadowColor = color;
-            ctx.shadowBlur = 10;
-            ctx.fill();
-            ctx.shadowBlur = 0;
+            const x = kp.position.x;
+            const y = kp.position.y;
+            const r = CONFIG.draw.keypointRadius;
+            const conf = kp.score;
 
-            // Outline
-            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-            ctx.lineWidth   = 1.5;
+            // Outer confidence ring — radius scales with confidence
+            const ringR = r + 4 + (conf * 6);
+            ctx.beginPath();
+            ctx.arc(x, y, ringR, 0, Math.PI * 2 * conf); // partial arc = confidence %
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            ctx.globalAlpha = 0.4;
             ctx.stroke();
+            ctx.globalAlpha = 1;
+
+            // Keypoint glow
+            ctx.beginPath();
+            ctx.arc(x, y, r + 3, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.15;
+            ctx.fill();
+            ctx.globalAlpha = 1;
+
+            // Main keypoint dot — gradient fill
+            const grad = ctx.createRadialGradient(x - 1, y - 1, 0, x, y, r);
+            grad.addColorStop(0, '#ffffff');
+            grad.addColorStop(0.4, color);
+            grad.addColorStop(1, 'rgba(0,0,0,0.3)');
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fillStyle = grad;
+            ctx.fill();
+
+            // Thin white ring
+            ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // Confidence label on key joints (shoulders, nose, hips)
+            if ([0, 5, 6, 11, 12].includes(i)) {
+                ctx.font = CONFIG.draw.labelFont;
+                const label = `${KP_LABELS[i]} ${(conf * 100).toFixed(0)}%`;
+                const tw = ctx.measureText(label).width + 8;
+
+                // Label background
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.beginPath();
+                const lx = x + r + 6;
+                const ly = y - 6;
+                // rounded rect
+                const rr = 3;
+                ctx.moveTo(lx + rr, ly);
+                ctx.arcTo(lx + tw, ly, lx + tw, ly + 14, rr);
+                ctx.arcTo(lx + tw, ly + 14, lx, ly + 14, rr);
+                ctx.arcTo(lx, ly + 14, lx, ly, rr);
+                ctx.arcTo(lx, ly, lx + tw, ly, rr);
+                ctx.closePath();
+                ctx.fill();
+
+                // Label text
+                ctx.fillStyle = conf > 0.7 ? '#22c55e' : (conf > 0.4 ? '#f59e0b' : '#ef4444');
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(label, lx + 4, ly + 7);
+            }
         }
     });
 }
 
 /**
- * Draw lines connecting keypoints to form the skeleton.
+ * Draw lines connecting keypoints to form the skeleton
+ * with gradient coloring and thickness variation.
  */
 function drawSkeleton(keypoints, posture) {
-    const color = posture.isGood
-        ? 'rgba(34,197,94,0.45)'
-        : 'rgba(239,68,68,0.45)';
+    const goodClr = posture.isGood ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)';
+    const goodClrFaint = posture.isGood ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)';
 
     SKELETON_CONNECTIONS.forEach(([iA, iB]) => {
         const a = keypoints[iA];
@@ -309,13 +380,255 @@ function drawSkeleton(keypoints, posture) {
 
         if (a.score > CONFIG.poseNet.minConfidence &&
             b.score > CONFIG.poseNet.minConfidence) {
+            const ax = a.position.x, ay = a.position.y;
+            const bx = b.position.x, by = b.position.y;
+
+            // Glow line (thick, faint)
             ctx.beginPath();
-            ctx.moveTo(a.position.x, a.position.y);
-            ctx.lineTo(b.position.x, b.position.y);
-            ctx.strokeStyle = color;
-            ctx.lineWidth   = CONFIG.draw.skeletonWidth;
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(bx, by);
+            ctx.strokeStyle = goodClrFaint;
+            ctx.lineWidth = CONFIG.draw.skeletonWidth + 6;
+            ctx.stroke();
+
+            // Main bone line — gradient along the bone
+            const lineGrad = ctx.createLinearGradient(ax, ay, bx, by);
+            lineGrad.addColorStop(0, goodClr);
+            lineGrad.addColorStop(1, goodClr);
+            ctx.beginPath();
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(bx, by);
+            ctx.strokeStyle = lineGrad;
+            ctx.lineWidth = CONFIG.draw.skeletonWidth;
+            ctx.lineCap = 'round';
             ctx.stroke();
         }
+    });
+
+    // Draw angle visualizations on key joints
+    drawAngleAnnotations(keypoints, posture);
+}
+
+/**
+ * Draw angle arc annotations at key body joints — the hallmark of
+ * professional ML pose estimation visualization.
+ */
+function drawAngleAnnotations(keypoints, posture) {
+    const get = (i) => keypoints[i];
+    const ok = (i) => get(i).score > CONFIG.poseNet.minConfidence;
+    // Note: KP is already defined as a global constant
+
+    // ── Neck angle arc (between ears and shoulders) ──
+    if (ok(KP.LEFT_SHOULDER) && ok(KP.RIGHT_SHOULDER) && ok(KP.NOSE)) {
+        const ls = get(KP.LEFT_SHOULDER).position;
+        const rs = get(KP.RIGHT_SHOULDER).position;
+        const nose = get(KP.NOSE).position;
+        const midShoulder = { x: (ls.x + rs.x) / 2, y: (ls.y + rs.y) / 2 };
+
+        // Draw neck line
+        ctx.beginPath();
+        ctx.setLineDash([4, 4]);
+        ctx.moveTo(midShoulder.x, midShoulder.y);
+        ctx.lineTo(nose.x, nose.y);
+        ctx.strokeStyle = 'rgba(168,85,247,0.6)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Draw angle arc
+        if (posture.neckAngle > 0) {
+            const angle1 = Math.atan2(nose.y - midShoulder.y, nose.x - midShoulder.x);
+            const vertAngle = -Math.PI / 2; // straight up
+            drawAngleArc(midShoulder.x, midShoulder.y, 25, vertAngle, angle1,
+                posture.neckAngle, posture.neckAngle >= CONFIG.posture.neckAngleMin ? '#a855f7' : '#ef4444');
+        }
+    }
+
+    // ── Shoulder tilt line + angle ──
+    if (ok(KP.LEFT_SHOULDER) && ok(KP.RIGHT_SHOULDER)) {
+        const ls = get(KP.LEFT_SHOULDER).position;
+        const rs = get(KP.RIGHT_SHOULDER).position;
+
+        // Horizontal reference line
+        ctx.beginPath();
+        ctx.setLineDash([3, 3]);
+        ctx.moveTo(ls.x - 30, ls.y);
+        ctx.lineTo(rs.x + 30, rs.y);
+        ctx.strokeStyle = 'rgba(59,130,246,0.4)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Horizontal reference
+        const midX = (ls.x + rs.x) / 2;
+        const midY = (ls.y + rs.y) / 2;
+        ctx.moveTo(midX - 40, midY);
+        ctx.lineTo(midX + 40, midY);
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Tilt angle label
+        if (posture.shoulderTilt !== null) {
+            const tiltColor = posture.shoulderTilt <= CONFIG.posture.shoulderTiltMax ? '#3b82f6' : '#ef4444';
+            drawMeasurementLabel(midX, midY - 18, `Tilt: ${posture.shoulderTilt.toFixed(1)}°`, tiltColor);
+        }
+    }
+
+    // ── Head offset indicator ──
+    if (ok(KP.NOSE) && ok(KP.LEFT_SHOULDER) && ok(KP.RIGHT_SHOULDER)) {
+        const nose = get(KP.NOSE).position;
+        const ls = get(KP.LEFT_SHOULDER).position;
+        const rs = get(KP.RIGHT_SHOULDER).position;
+        const midX = (ls.x + rs.x) / 2;
+
+        // Draw vertical reference from shoulder midpoint
+        ctx.beginPath();
+        ctx.setLineDash([2, 4]);
+        ctx.moveTo(midX, (ls.y + rs.y) / 2);
+        ctx.lineTo(midX, nose.y - 20);
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Offset arrow
+        const offset = nose.x - midX;
+        if (Math.abs(offset) > 5) {
+            ctx.beginPath();
+            ctx.moveTo(midX, nose.y);
+            ctx.lineTo(nose.x, nose.y);
+            ctx.strokeStyle = Math.abs(offset) > CONFIG.posture.headOffsetMax ? '#ef4444' : '#22c55e';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([]);
+            ctx.stroke();
+        }
+    }
+}
+
+/**
+ * Draw a measurement angle arc with degree label.
+ */
+function drawAngleArc(cx, cy, radius, startAngle, endAngle, degrees, color) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, startAngle, endAngle, degrees > 180);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.8;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Degree label at mid-arc
+    const midAngle = (startAngle + endAngle) / 2;
+    const lx = cx + (radius + 14) * Math.cos(midAngle);
+    const ly = cy + (radius + 14) * Math.sin(midAngle);
+    drawMeasurementLabel(lx, ly, `${degrees.toFixed(0)}°`, color);
+}
+
+/**
+ * Draw a small measurement label with background.
+ */
+function drawMeasurementLabel(x, y, text, color) {
+    ctx.font = CONFIG.draw.labelFont;
+    const tw = ctx.measureText(text).width + 8;
+    const h = 16;
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+    ctx.beginPath();
+    const rr = 3;
+    ctx.moveTo(x - tw/2 + rr, y - h/2);
+    ctx.arcTo(x + tw/2, y - h/2, x + tw/2, y + h/2, rr);
+    ctx.arcTo(x + tw/2, y + h/2, x - tw/2, y + h/2, rr);
+    ctx.arcTo(x - tw/2, y + h/2, x - tw/2, y - h/2, rr);
+    ctx.arcTo(x - tw/2, y - h/2, x + tw/2, y - h/2, rr);
+    ctx.closePath();
+    ctx.fill();
+
+    // Border
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.6;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, x, y);
+    ctx.textAlign = 'start';
+}
+
+/**
+ * Draw a professional ML data HUD overlay — FPS, model info, frame count.
+ */
+function drawDataHUD(keypoints, posture) {
+    // Frame counter for HUD
+    if (!drawDataHUD._frameCount) drawDataHUD._frameCount = 0;
+    if (!drawDataHUD._lastTime) drawDataHUD._lastTime = performance.now();
+    if (!drawDataHUD._fps) drawDataHUD._fps = 0;
+    drawDataHUD._frameCount++;
+    const now = performance.now();
+    if (now - drawDataHUD._lastTime >= 1000) {
+        drawDataHUD._fps = drawDataHUD._frameCount;
+        drawDataHUD._frameCount = 0;
+        drawDataHUD._lastTime = now;
+    }
+
+    const padding = 12;
+    const lineH = 16;
+    const avgConf = keypoints.reduce((s, k) => s + k.score, 0) / keypoints.length;
+    const visibleKps = keypoints.filter(k => k.score > CONFIG.poseNet.minConfidence).length;
+
+    const lines = [
+        `MODEL: PoseNet MobileNetV1`,
+        `FPS: ${drawDataHUD._fps}`,
+        `KEYPOINTS: ${visibleKps}/17`,
+        `AVG CONF: ${(avgConf * 100).toFixed(1)}%`,
+        `FRAME: ${state.totalFrames}`,
+        `CLASS: ${posture.isGood ? 'GOOD_POSTURE' : 'BAD_POSTURE'}`,
+        `SCORE: ${posture.score}/100`,
+    ];
+
+    const boxW = 195;
+    const boxH = lines.length * lineH + padding * 2;
+    const boxX = 10;
+    const boxY = 10;
+
+    // Background
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+    ctx.beginPath();
+    const rr = 6;
+    ctx.moveTo(boxX + rr, boxY);
+    ctx.arcTo(boxX + boxW, boxY, boxX + boxW, boxY + boxH, rr);
+    ctx.arcTo(boxX + boxW, boxY + boxH, boxX, boxY + boxH, rr);
+    ctx.arcTo(boxX, boxY + boxH, boxX, boxY, rr);
+    ctx.arcTo(boxX, boxY, boxX + boxW, boxY, rr);
+    ctx.closePath();
+    ctx.fill();
+
+    // Border
+    ctx.strokeStyle = posture.isGood ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Text lines
+    ctx.font = CONFIG.draw.hudFont;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    lines.forEach((line, i) => {
+        const parts = line.split(': ');
+        // Key
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
+        ctx.fillText(parts[0] + ':', boxX + padding, boxY + padding + i * lineH);
+        // Value
+        if (parts[0] === 'CLASS') {
+            ctx.fillStyle = posture.isGood ? '#22c55e' : '#ef4444';
+        } else if (parts[0] === 'AVG CONF') {
+            ctx.fillStyle = avgConf > 0.7 ? '#22c55e' : '#f59e0b';
+        } else {
+            ctx.fillStyle = '#e2e8f0';
+        }
+        const keyW = ctx.measureText(parts[0] + ': ').width;
+        ctx.fillText(parts[1], boxX + padding + keyW, boxY + padding + i * lineH);
     });
 }
 
@@ -349,10 +662,13 @@ function analyzePosture(keypoints) {
         const rs = get(KP.RIGHT_SHOULDER).position;
         const dy = rs.y - ls.y;
         const dx = rs.x - ls.x;
-        result.shoulderTilt = Math.abs(Math.atan2(dy, dx) * (180 / Math.PI));
-        // Normalize: 0° is perfectly horizontal
-        result.shoulderTilt = Math.abs(result.shoulderTilt);
-        if (result.shoulderTilt > 90) result.shoulderTilt = 180 - result.shoulderTilt;
+        // atan2 gives angle from horizontal; for level shoulders dx≫dy so angle≈0
+        // We want the absolute deviation from horizontal (0°)
+        let tiltAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+        // Normalize to range [-90, 90] from horizontal
+        if (tiltAngle > 90) tiltAngle = 180 - tiltAngle;
+        if (tiltAngle < -90) tiltAngle = -180 - tiltAngle;
+        result.shoulderTilt = Math.abs(tiltAngle);
     }
 
     // --- Neck Angle ---

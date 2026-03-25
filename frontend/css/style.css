@@ -298,3 +298,46 @@ main {
 
 .dot-online { background: var(--success); box-shadow: 0 0 8px var(--success); }
 .dot-standby { background: var(--warning); }
+
+/* ---------- Responsive Design ---------- */
+@media (max-width: 1200px) {
+    .app-shell {
+        grid-template-columns: 280px 1fr;
+    }
+}
+
+@media (max-width: 900px) {
+    .app-shell {
+        grid-template-areas:
+            "header"
+            "main"
+            "sidebar";
+        grid-template-columns: 1fr;
+        grid-template-rows: 64px 1fr auto;
+    }
+
+    aside {
+        max-height: 50vh;
+        border-right: none;
+        border-top: 1px solid var(--border-subtle);
+    }
+
+    .data-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 600px) {
+    main { padding: 12px; gap: 12px; }
+    header { padding: 0 12px; }
+    aside { padding: 16px; }
+
+    .data-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+
+    .metric-value { font-size: 1.2rem; }
+
+    .monitor-frame { aspect-ratio: 4/3; }
+}
