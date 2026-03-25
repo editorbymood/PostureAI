@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PostureAI v4.0 — Precision Dashboard</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="app-shell">
+        <!-- SIDEBAR: PERSON INTELLIGENCE -->
+        <aside>
+            <div class="brand-h">
+                <span>🤖</span>
+                <span>PostureAI</span>
+                <span class="version-pill">v4.0</span>
+            </div>
+            
+            <div style="margin-top: 40px;">
+                <h3 class="sidebar-title">Subject Intelligence</h3>
+                <div id="person-cards" class="cards-list">
+                    <!-- Dynamic subject cards injected here -->
+                    <div style="padding: 40px 20px; text-align: center; border: 1px dashed var(--border-subtle); border-radius: 12px; color: var(--text-low);">
+                        <div style="font-size: 2rem; margin-bottom: 12px;">👥</div>
+                        <p style="font-size: 0.8rem; font-weight: 500;">No subjects active.<br/>Initiate scan to begin.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-top: auto; padding-top: 24px; border-top: 1px solid var(--border-subtle);">
+                <h3 class="sidebar-title">Diagnostic Tips</h3>
+                <div id="tips-content" style="font-size: 0.8rem; color: var(--text-mid); line-height: 1.6;">
+                    System optimized for human-only postural analysis. Corrective feedback will appear here.
+                </div>
+            </div>
+        </aside>
+
+        <!-- HEADER: SYSTEM STATUS -->
+        <header>
+            <div style="display: flex; gap: 32px; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span id="status-dot" class="dot dot-standby"></span>
+                    <span id="status-text" style="font-size: 0.75rem; font-weight: 600; color: var(--text-mid);">System Standby</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span id="backend-dot" class="dot dot-standby"></span>
+                    <span id="backend-text" style="font-size: 0.75rem; font-weight: 600; color: var(--text-mid);">AI Link: Offline</span>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 24px; align-items: center;">
+                <div style="display: flex; flex-direction: column; align-items: flex-end;">
+                    <span style="font-size: 0.65rem; color: var(--text-low); font-weight: 700; text-transform: uppercase;">Engine Load</span>
+                    <span id="fps-badge" style="font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; color: var(--primary);">-- FPS</span>
+                </div>
+                <div id="model-badge" style="padding: 6px 14px; background: var(--bg-hover); border: 1px solid var(--border-subtle); border-radius: 6px; font-size: 0.7rem; font-weight: 700; color: var(--text-high);">
+                    Initializing Model...
+                </div>
+            </div>
+        </header>
+
+        <!-- MAIN VIEWPORT -->
+        <main>
+            <!-- TOP BAR (POSTURE BANNER) -->
+            <div id="posture-banner" style="background: var(--bg-card); border: 1px solid var(--border-subtle); padding: 16px 24px; border-radius: var(--radius-md); display: flex; align-items: center; gap: 16px;">
+                <div id="posture-icon" style="font-size: 1.5rem;">📡</div>
+                <div>
+                    <h3 id="posture-msg" style="font-family: 'Outfit', sans-serif; font-size: 1.1rem; font-weight: 600;">Neural Scan Ready</h3>
+                    <p style="font-size: 0.75rem; color: var(--text-mid);">Precision multi-person posture tracking active.</p>
+                </div>
+            </div>
+
+            <!-- MONITOR FRAME -->
+            <div class="monitor-frame">
+                <video id="webcam" playsinline autoplay></video>
+                <canvas id="pose-canvas"></canvas>
+
+                <!-- START OVERLAY -->
+                <div id="start-prompt" class="scan-overlay">
+                    <div class="scan-box">
+                        <div style="font-size: 3rem; margin-bottom: 20px;">👤</div>
+                        <h2 style="font-family: 'Outfit', sans-serif; font-weight: 700; margin-bottom: 12px; font-size: 1.8rem;">Initialize Neural Guard</h2>
+                        <p style="color: var(--text-mid); font-size: 0.95rem;">Deploy high-performance human-only monitoring. Supports up to 6 subjects with 100-scale precision.</p>
+                        <button id="start-btn" class="btn-start">ACTIVATE SYSTEM</button>
+                    </div>
+                </div>
+
+                <!-- LOADING OVERLAY -->
+                <div id="loading-overlay" class="scan-overlay hidden">
+                    <div class="scan-box" style="width: 320px;">
+                        <h3 id="loader-text" style="font-family: 'Outfit', sans-serif; margin-bottom: 20px;">Syncing Neural Weights</h3>
+                        <div style="height: 4px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden;">
+                            <div id="loader-bar" style="height: 100%; width: 0%; background: var(--primary); transition: width 0.3s ease;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SYSTEM STATISTICS -->
+            <div class="data-grid">
+                <div class="metric-card">
+                    <span class="metric-label">Session Uptime</span>
+                    <div id="stat-duration" class="metric-value">00:00</div>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Neural Quality</span>
+                    <div id="global-good-pct" class="metric-value" style="color: var(--success);">--%</div>
+                </div>
+                <div class="metric-card">
+                    <span class="metric-label">Precision Score</span>
+                    <div id="global-avg-score" class="metric-value">--</div>
+                </div>
+                <div class="metric-card" style="display: flex; justify-content: space-between; align-items: flex-end;">
+                    <div>
+                        <span class="metric-label">Posture Deviations</span>
+                        <div id="global-alerts" class="metric-value" style="color: var(--danger);">0</div>
+                    </div>
+                    <button id="reset-btn" style="background: none; border: none; font-size: 1.2rem; cursor: pointer; opacity: 0.3;">🔄</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- CORE LOGIC -->
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

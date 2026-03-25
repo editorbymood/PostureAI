@@ -1,0 +1,300 @@
+/* =====================================================
+   PostureAI v4.0 — Precision Dashboard Design System
+   Performance Optimization: High Accuracy, Zero Lag
+   ===================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap');
+
+:root {
+    /* --- Neutral Professional Palette --- */
+    --bg-base: #0a0c10;
+    --bg-card: #151921;
+    --bg-hover: #1c222d;
+    
+    --border-subtle: rgba(255, 255, 255, 0.06);
+    --border-active: rgba(99, 102, 241, 0.3);
+    
+    --primary: #6366f1;
+    --primary-soft: rgba(99, 102, 241, 0.1);
+    
+    --success: #10b981;
+    --success-soft: rgba(16, 185, 129, 0.1);
+    
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    
+    --text-high: #f1f5f9;
+    --text-mid: #94a3b8;
+    --text-low: #475569;
+    
+    /* System Stats */
+    --radius-lg: 16px;
+    --radius-md: 12px;
+    --radius-sm: 8px;
+    
+    /* PERFORMANCE: Avoiding backdrop-filter for slow hardware */
+    --glass-effect: none; 
+}
+
+/* --- Core Reset --- */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    -webkit-font-smoothing: antialiased;
+}
+
+body {
+    background: var(--bg-base);
+    color: var(--text-high);
+    font-family: 'Inter', system-ui, sans-serif;
+    line-height: 1.5;
+    height: 100vh;
+    display: flex;
+    overflow: hidden;
+}
+
+/* --- Layout Structure --- */
+.app-shell {
+    display: grid;
+    grid-template-areas: 
+        "sidebar header"
+        "sidebar main";
+    grid-template-columns: 360px 1fr;
+    grid-template-rows: 64px 1fr;
+    width: 100%;
+}
+
+/* --- Header --- */
+header {
+    grid-area: header;
+    background: var(--bg-base);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+}
+
+.brand-h {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 700;
+    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.version-pill {
+    background: var(--primary-soft);
+    color: var(--primary);
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+}
+
+/* --- Sidebar --- */
+aside {
+    grid-area: sidebar;
+    background: var(--bg-card);
+    border-right: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    padding: 24px;
+    overflow-y: auto;
+}
+
+.sidebar-title {
+    font-family: 'Outfit', sans-serif;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-low);
+    margin-bottom: 16px;
+    font-weight: 600;
+}
+
+/* --- Main Viewport --- */
+main {
+    grid-area: main;
+    padding: 24px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+/* --- Optimized Video Container --- */
+.monitor-frame {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16/9;
+    background: #000;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+    overflow: hidden;
+    box-shadow: 0 20px 40px -10px rgba(0,0,0,0.4);
+}
+
+#webcam {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+    opacity: 0.9;
+}
+
+#pose-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    transform: scaleX(-1);
+    z-index: 5;
+}
+
+/* --- Monitor Overlay (Professional Prompt) --- */
+.scan-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(10, 12, 16, 0.8);
+    z-index: 20;
+    padding: 40px;
+}
+
+.scan-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border-active);
+    padding: 32px;
+    border-radius: var(--radius-lg);
+    text-align: center;
+    max-width: 440px;
+}
+
+.btn-start {
+    background: var(--primary);
+    color: white;
+    font-weight: 700;
+    font-family: 'Outfit', sans-serif;
+    padding: 12px 24px;
+    border-radius: var(--radius-md);
+    border: none;
+    cursor: pointer;
+    margin-top: 24px;
+    transition: transform 0.2s ease;
+}
+
+.btn-start:hover { transform: scale(1.02); }
+
+/* --- Data Grid (Stats) --- */
+.data-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+}
+
+.metric-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    padding: 16px 20px;
+    border-radius: var(--radius-md);
+}
+
+.metric-label {
+    font-size: 0.7rem;
+    color: var(--text-mid);
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+.metric-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-high);
+    font-family: 'Outfit', sans-serif;
+}
+
+/* --- Person Intelligence Cards (Pro) --- */
+.person-card {
+    background: var(--bg-hover);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    margin-bottom: 12px;
+    position: relative;
+    transition: border-color 0.2s ease;
+}
+
+.person-card.active {
+    border-color: var(--border-active);
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.id-badge {
+    background: var(--text-low);
+    color: white;
+    font-size: 0.6rem;
+    font-weight: 800;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.human-check {
+    color: var(--success);
+    font-size: 0.65rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* --- Prediction Row --- */
+.prob-bar-container {
+    height: 6px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 3px;
+    margin: 4px 0 10px;
+    overflow: hidden;
+}
+
+.prob-fill {
+    height: 100%;
+    background: var(--primary);
+    transition: width 0.3s ease;
+}
+
+/* --- Score Hub --- */
+.score-circle {
+    width: 48px;
+    height: 48px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 1rem;
+    font-family: 'Outfit', sans-serif;
+}
+
+/* Helper Utility */
+.hidden { display: none !important; }
+
+/* Status Indicators */
+.dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+}
+
+.dot-online { background: var(--success); box-shadow: 0 0 8px var(--success); }
+.dot-standby { background: var(--warning); }

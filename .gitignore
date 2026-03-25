@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+
+# Javascript
+node_modules/
+.npm
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project-specific
+data/raw/
+data/processed/
+*.log
+.vscode/
+.idea/
