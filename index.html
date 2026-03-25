@@ -4,15 +4,19 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧍</text></svg>">
-    <meta name="description" content="Real-time Posture Detection using PoseNet and ml5.js - Detect and analyze human posture in the browser using machine learning">
-    <title>Posture Detection | PoseNet + ml5.js</title>
+    <meta name="description" content="Real-time Multi-Person Posture Detection using MoveNet + ByteTrack - Track multiple people with temporal smoothing in the browser">
+    <title>PostureAI | Multi-Person Tracking + Temporal Modeling</title>
 
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-    <!-- ml5.js CDN -->
+    <!-- TensorFlow.js + MoveNet MultiPose -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js"></script>
+
+    <!-- ml5.js CDN (fallback) -->
     <script src="https://unpkg.com/ml5@0.12.2/dist/ml5.min.js"></script>
 
     <!-- Stylesheet -->
@@ -27,7 +31,7 @@
                 <div class="spinner-ring"></div>
                 <div class="spinner-ring"></div>
             </div>
-            <h2 class="loader-title">Loading PoseNet Model</h2>
+            <h2 class="loader-title">Loading MoveNet MultiPose</h2>
             <p class="loader-subtitle">Preparing AI to analyze your posture...</p>
             <div class="loader-progress">
                 <div class="loader-progress-bar" id="loader-bar"></div>
@@ -44,7 +48,7 @@
                     <span class="logo-icon">🧍</span>
                     <h1>PostureAI</h1>
                 </div>
-                <span class="badge">Powered by PoseNet + ml5.js</span>
+                <span class="badge">MoveNet MultiPose + ByteTrack</span>
             </div>
             <div class="header-right">
                 <div class="status-indicator" id="status-indicator">
@@ -166,6 +170,63 @@
                     </div>
                 </div>
 
+                <!-- Tracking Panel -->
+                <div class="card tracking-card">
+                    <div class="card-header">
+                        <h2>🎯 Multi-Person Tracking</h2>
+                        <span class="card-badge" id="tracker-status">--</span>
+                    </div>
+                    <div class="tracking-stats">
+                        <div class="track-stat">
+                            <span class="track-stat-label">Active</span>
+                            <span class="track-stat-value" id="track-active">0</span>
+                        </div>
+                        <div class="track-stat">
+                            <span class="track-stat-label">Confirmed</span>
+                            <span class="track-stat-value" id="track-confirmed">0</span>
+                        </div>
+                        <div class="track-stat">
+                            <span class="track-stat-label">Lost</span>
+                            <span class="track-stat-value" id="track-lost">0</span>
+                        </div>
+                        <div class="track-stat">
+                            <span class="track-stat-label">Re-IDs</span>
+                            <span class="track-stat-value" id="track-archived">0</span>
+                        </div>
+                    </div>
+                    <div class="person-list" id="person-list">
+                        <!-- Dynamically populated per-person cards -->
+                    </div>
+                </div>
+
+                <!-- Temporal Analysis -->
+                <div class="card temporal-card">
+                    <div class="card-header">
+                        <h2>📊 Temporal Analysis</h2>
+                    </div>
+                    <div class="temporal-stats">
+                        <div class="metric-item">
+                            <span class="metric-label">Stability</span>
+                            <span class="metric-value" id="temporal-stability">--%</span>
+                            <div class="metric-bar">
+                                <div class="metric-bar-fill" id="bar-stability"></div>
+                            </div>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Trend</span>
+                            <span class="metric-value" id="temporal-trend">--</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Predicted Joints</span>
+                            <span class="metric-value" id="temporal-predicted">0/17</span>
+                        </div>
+                        <div class="metric-item">
+                            <span class="metric-label">Window</span>
+                            <span class="metric-value" id="temporal-window">0/30</span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Tips Card -->
                 <div class="card tips-card">
                     <div class="card-header">
@@ -180,7 +241,7 @@
 
         <!-- Footer -->
         <footer class="app-footer">
-            <p>Built with ❤️ using <strong>PoseNet</strong> + <strong>ml5.js</strong> | Machine Learning in the Browser</p>
+            <p>Built with ❤️ using <strong>MoveNet MultiPose</strong> + <strong>ByteTrack</strong> + <strong>Temporal CNN</strong> | Advanced ML in the Browser</p>
         </footer>
     </div>
 
@@ -188,6 +249,10 @@
     <audio id="alert-sound" preload="auto">
         <source src="data:audio/wav;base64,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" type="audio/wav">
     </audio>
+
+    <!-- Advanced ML Modules -->
+    <script src="tracker.js"></script>
+    <script src="temporal.js"></script>
 
     <!-- Main Script -->
     <script src="app.js"></script>

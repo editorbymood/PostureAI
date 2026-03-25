@@ -696,6 +696,156 @@ body {
     font-weight: 600;
 }
 
+/* ---------- Multi-Person Tracking ---------- */
+.tracking-card .card-header h2 { font-size: 0.95rem; }
+
+.tracking-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.track-stat {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 8px;
+    text-align: center;
+}
+
+.track-stat-label {
+    display: block;
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+}
+
+.track-stat-value {
+    display: block;
+    font-size: 1.1rem;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+}
+
+.person-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.person-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    transition: var(--transition-fast);
+    position: relative;
+}
+
+.person-card:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border-glow);
+}
+
+.person-card.occluded {
+    opacity: 0.55;
+    border-style: dashed;
+}
+
+.person-color-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 0 0 8px var(--dot-color, var(--accent-primary));
+}
+
+.person-id {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    min-width: 28px;
+}
+
+.person-score {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-left: auto;
+}
+
+.person-meta {
+    display: flex;
+    gap: 6px;
+    font-size: 0.65rem;
+    color: var(--text-muted);
+}
+
+.person-badge {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.6rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.person-badge.re-id {
+    background: rgba(168, 85, 247, 0.2);
+    color: #a855f7;
+}
+
+.person-badge.occluded {
+    background: rgba(245, 158, 11, 0.2);
+    color: #f59e0b;
+}
+
+.person-badge.new {
+    background: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
+}
+
+/* ---------- Temporal Analysis ---------- */
+.temporal-card .card-header h2 { font-size: 0.95rem; }
+
+.temporal-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* ---------- Dashboard Scroll ---------- */
+.dashboard-section {
+    max-height: calc(100vh - 80px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99, 102, 241, 0.3) transparent;
+}
+
+.dashboard-section::-webkit-scrollbar {
+    width: 4px;
+}
+
+.dashboard-section::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.dashboard-section::-webkit-scrollbar-thumb {
+    background: rgba(99, 102, 241, 0.3);
+    border-radius: 4px;
+}
+
 /* ---------- Responsive ---------- */
 @media (max-width: 1024px) {
     .main-content {

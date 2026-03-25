@@ -49,7 +49,7 @@ const CONFIG = {
         imageScaleFactor: 0.3,
         outputStride:   16,
         flipHorizontal: true,          // ml5.js PoseNet needs this to mirror keypoints
-        minConfidence:  0.2,
+        minConfidence:  0.15,
         maxPoseDetections: 1,
         scoreThreshold: 0.5,
         nmsRadius:      20,
@@ -84,9 +84,14 @@ const CONFIG = {
 
 // ─── State ─────────────────────────────────────────────
 const state = {
-    poseNet:        null,
-    currentPose:    null,
+    poseNet:        null,      // Legacy PoseNet (fallback)
+    detector:       null,      // MoveNet MultiPose detector
+    tracker:        null,      // ByteTrack-inspired tracker
+    temporalEngines: new Map(), // Per-person temporal engines (trackId → TemporalEngine)
+    activeTracks:   [],        // Currently tracked persons
+    currentPose:    null,      // Primary person's pose (for backward compat)
     isRunning:      false,
+    useMoveNet:     false,     // Whether MoveNet loaded successfully
     score:          null,
     smoothedScore:  null,
 
@@ -188,27 +193,61 @@ async function setupCamera() {
 
 
 /* =======================================================
-   2. POSENET MODEL LOADING
+   2. MODEL LOADING — MoveNet MultiPose (primary) + PoseNet (fallback)
    ======================================================= */
 
 /**
- * Load PoseNet through ml5.js.
- * Returns a promise that resolves when the model is ready.
+ * Attempt to load MoveNet MultiPose Lightning.
+ * Falls back to ml5 PoseNet if TF.js libraries aren't available.
  */
-function loadPoseNet() {
-    return new Promise((resolve, reject) => {
-        simulateLoading();
+async function loadDetector() {
+    simulateLoading();
 
+    // Try MoveNet MultiPose first
+    try {
+        if (typeof poseDetection !== 'undefined' && typeof tf !== 'undefined') {
+            await tf.ready();
+            console.log('🧠 TF.js backend:', tf.getBackend());
+
+            const model = poseDetection.SupportedModels.MoveNet;
+            state.detector = await poseDetection.createDetector(model, {
+                modelType: poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING,
+                enableTracking: false, // We use our own ByteTrack tracker
+                minPoseScore: 0.15,     // Lower threshold for varied poses
+                maxPoses: 6,
+            });
+
+            state.useMoveNet = true;
+            console.log('✅ MoveNet MultiPose Lightning loaded');
+
+            // Initialize ByteTrack tracker
+            state.tracker = new MultiPersonTracker({
+                iouThreshHigh: 0.3,
+                iouThreshLow: 0.1,
+                reIdThresh: 0.55,
+                maxDeadAge: 90,
+                maxTracks: 8,
+            });
+            console.log('✅ ByteTrack tracker initialized');
+            return;
+        }
+    } catch (err) {
+        console.warn('⚠️ MoveNet failed, falling back to PoseNet:', err.message);
+    }
+
+    // Fallback to ml5 PoseNet
+    return new Promise((resolve, reject) => {
         state.poseNet = ml5.poseNet(
             DOM.webcam,
             CONFIG.poseNet,
             () => {
-                console.log('✅ PoseNet model loaded');
+                console.log('✅ PoseNet model loaded (fallback)');
+                state.useMoveNet = false;
+                // Still create tracker for single-person temporal smoothing
+                state.tracker = new MultiPersonTracker({ maxTracks: 1 });
                 resolve();
             }
         );
-
-        // Attach the pose event listener
         state.poseNet.on('pose', onPoseResults);
     });
 }
@@ -218,30 +257,148 @@ function simulateLoading() {
     let progress = 0;
     const interval = setInterval(() => {
         progress += Math.random() * 12;
-        if (progress > 90) progress = 90;     // cap until real load
+        if (progress > 90) progress = 90;
         DOM.loaderBar.style.width = progress + '%';
     }, 300);
-
-    // Store interval id so we can clear it later
     state._loadingInterval = interval;
 }
 
 
 /* =======================================================
-   3. POSE DETECTION CALLBACK
+   3. DETECTION LOOP + TRACKING PIPELINE
    ======================================================= */
 
 /**
- * Called each time PoseNet returns results.
- * @param {Array} results — array of detected poses
+ * MoveNet detection loop — runs async, feeds into ByteTrack tracker.
+ */
+async function detectLoop() {
+    if (!state.isRunning) return;
+
+    try {
+        if (state.useMoveNet && state.detector) {
+            const poses = await state.detector.estimatePoses(DOM.webcam, {
+                flipHorizontal: true,
+            });
+
+            // Convert MoveNet format to our tracker format
+            const detections = poses.map(pose => ({
+                keypoints: pose.keypoints.map(kp => ({
+                    x: kp.x,
+                    y: kp.y,
+                    score: kp.score,
+                    name: kp.name || '',
+                })),
+                score: pose.score || pose.keypoints.reduce((s, k) => s + k.score, 0) / pose.keypoints.length,
+            }));
+
+            // Feed into ByteTrack tracker
+            state.activeTracks = state.tracker.update(detections);
+
+            // Run temporal smoothing for each tracked person
+            state.activeTracks.forEach(track => {
+                if (!state.temporalEngines.has(track.id)) {
+                    state.temporalEngines.set(track.id, new TemporalEngine({
+                        windowSize: 30,
+                        smoothingBase: 0.35,
+                        predictionHorizon: 15,
+                    }));
+                }
+                const engine = state.temporalEngines.get(track.id);
+
+                // Convert track keypoints to the format temporal engine expects
+                const rawKPs = track.keypoints.map(kp => ({
+                    x: kp.x,
+                    y: kp.y,
+                    score: kp.score,
+                    name: kp.name || '',
+                }));
+
+                // Apply temporal smoothing
+                track._smoothedKeypoints = engine.processFrame(rawKPs);
+                track._temporalEngine = engine;
+            });
+
+            // Cleanup temporal engines for dead tracks
+            const activeIds = new Set(state.activeTracks.map(t => t.id));
+            for (const [id] of state.temporalEngines) {
+                if (!activeIds.has(id)) {
+                    // Keep for a bit in case of re-id, then delete
+                    const engine = state.temporalEngines.get(id);
+                    if (engine.frameCount > 0 && engine.postureBuffer.length === 0) {
+                        state.temporalEngines.delete(id);
+                    }
+                }
+            }
+
+            // Set primary person for backward-compat UI
+            if (state.activeTracks.length > 0) {
+                const primary = state.activeTracks[0];
+                state.currentPose = {
+                    keypoints: (primary._smoothedKeypoints || primary.keypoints).map((kp, i) => ({
+                        position: { x: kp.x, y: kp.y },
+                        score: kp.score,
+                        part: KP_NAMES[i] || '',
+                    })),
+                };
+            } else {
+                state.currentPose = null;
+            }
+        }
+    } catch (err) {
+        // Silently handle detection errors to keep loop running
+        if (err.message && !err.message.includes('disposed')) {
+            console.warn('Detection error:', err.message);
+        }
+    }
+
+    requestAnimationFrame(detectLoop);
+}
+
+// Keypoint name lookup (PoseNet order)
+const KP_NAMES = [
+    'nose','leftEye','rightEye','leftEar','rightEar',
+    'leftShoulder','rightShoulder','leftElbow','rightElbow',
+    'leftWrist','rightWrist','leftHip','rightHip',
+    'leftKnee','rightKnee','leftAnkle','rightAnkle',
+];
+
+/**
+ * PoseNet fallback callback — wraps single-person detection into tracker.
  */
 function onPoseResults(results) {
     if (!results || results.length === 0) {
+        state.activeTracks = state.tracker ? state.tracker.update([]) : [];
         state.currentPose = null;
         return;
     }
 
-    // We only care about the first (single) pose
+    // Convert ml5 PoseNet format to tracker format
+    const pose = results[0].pose;
+    const detection = {
+        keypoints: pose.keypoints.map(kp => ({
+            x: kp.position.x,
+            y: kp.position.y,
+            score: kp.score,
+            name: kp.part || '',
+        })),
+        score: pose.score || 0,
+    };
+
+    state.activeTracks = state.tracker.update([detection]);
+
+    // Apply temporal smoothing
+    state.activeTracks.forEach(track => {
+        if (!state.temporalEngines.has(track.id)) {
+            state.temporalEngines.set(track.id, new TemporalEngine());
+        }
+        const engine = state.temporalEngines.get(track.id);
+        track._smoothedKeypoints = engine.processFrame(
+            track.keypoints.map(kp => ({ x: kp.x, y: kp.y, score: kp.score, name: kp.name || '' }))
+        );
+        track._temporalEngine = engine;
+    });
+
+    // Backward compat
     state.currentPose = results[0].pose;
 }
 
@@ -251,8 +408,8 @@ function onPoseResults(results) {
    ======================================================= */
 
 /**
- * Main render loop — clears canvas, draws keypoints/skeleton,
- * runs posture analysis, and updates UI.
+ * Main render loop — clears canvas, draws all tracked persons,
+ * runs per-person posture analysis with temporal smoothing.
  */
 function renderLoop() {
     if (!state.isRunning) return;
@@ -260,16 +417,102 @@ function renderLoop() {
     // Clear canvas
     ctx.clearRect(0, 0, DOM.canvas.width, DOM.canvas.height);
 
-    if (state.currentPose) {
+    const tracks = state.activeTracks || [];
+
+    if (tracks.length > 0) {
+        // Draw each tracked person
+        tracks.forEach((track, idx) => {
+            const smoothed = track._smoothedKeypoints || track.keypoints;
+
+            // Convert to the format analyzePosture expects
+            const kps = smoothed.map((kp, i) => ({
+                position: { x: kp.x, y: kp.y },
+                score: kp.score,
+                part: KP_NAMES[i] || '',
+            }));
+
+            const posture = analyzePosture(kps);
+
+            // Feed posture into temporal engine for smoothed classification
+            if (track._temporalEngine) {
+                const temporalResult = track._temporalEngine.addPostureFrame(
+                    posture.score, posture.isGood, posture.issues
+                );
+                if (temporalResult) {
+                    posture.score = temporalResult.score;
+                    posture.isGood = temporalResult.isGood;
+                    posture.issues = temporalResult.issues;
+                    posture._stability = temporalResult.stability;
+                    posture._temporalConfidence = temporalResult.confidence;
+                }
+            }
+
+            // Store posture on track for per-person cards
+            track.lastPosture = posture;
+            track.postureScore = posture.score;
+            if (posture.isGood) track.goodFrames++;
+            track.totalAnalyzed++;
+
+            // Determine colors — use track color for skeleton
+            const trackColor = track.color?.primary || CONFIG.draw.goodColor;
+            const overridePosture = {
+                ...posture,
+                _trackColor: trackColor,
+                _trackId: track.id,
+                _isOccluded: track.isOccluded,
+            };
+
+            // Draw skeleton & keypoints with track-specific color
+            drawSkeleton(kps, overridePosture);
+            drawKeypoints(kps, overridePosture);
+
+            // Draw bounding box + ID label for this person
+            drawTrackBBox(track, posture);
+
+            // Draw predicted keypoint indicators
+            smoothed.forEach((kp, i) => {
+                if (kp.predicted && kp.score > 0.15) {
+                    // Draw dashed ring around predicted joints
+                    ctx.beginPath();
+                    ctx.setLineDash([3, 3]);
+                    ctx.arc(kp.x, kp.y, 12, 0, Math.PI * 2);
+                    ctx.strokeStyle = 'rgba(245, 158, 11, 0.5)';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+            });
+
+            // Primary person → update sidebar UI
+            if (idx === 0) {
+                updatePostureBanner(posture);
+                updateScoreCard(posture.score);
+                updateMetrics(posture);
+                updateConfidence(kps);
+                updateSessionStats(posture);
+                updateTips(posture);
+            }
+        });
+
+        // Draw multi-person data HUD
+        const primaryKps = tracks[0]._smoothedKeypoints || tracks[0].keypoints;
+        const primaryPosture = tracks[0].lastPosture || { score: 0, isGood: true };
+        drawDataHUD(
+            primaryKps.map((kp, i) => ({ score: kp.score, position: { x: kp.x, y: kp.y } })),
+            primaryPosture
+        );
+
+        // Update tracking panel
+        updateTrackingPanel();
+        updateTemporalPanel(tracks[0]);
+
+    } else if (state.currentPose) {
+        // Fallback for PoseNet (backward compat)
         const kps = state.currentPose.keypoints;
         const posture = analyzePosture(kps);
-
-        // Draw ML visualization layers (order matters)
-        drawSkeleton(kps, posture);      // Bones + angle annotations
-        drawKeypoints(kps, posture);      // Joints with confidence rings
-        drawDataHUD(kps, posture);        // Real-time ML data overlay
-
-        // Update all UI panels
+        drawSkeleton(kps, posture);
+        drawKeypoints(kps, posture);
+        drawDataHUD(kps, posture);
         updatePostureBanner(posture);
         updateScoreCard(posture.score);
         updateMetrics(posture);
@@ -279,6 +522,158 @@ function renderLoop() {
     }
 
     requestAnimationFrame(renderLoop);
+}
+
+/**
+ * Draw bounding box and ID label for a tracked person.
+ */
+function drawTrackBBox(track, posture) {
+    const bbox = track.predictedBBox;
+    if (!bbox || bbox.width < 5) return;
+
+    const color = track.color?.primary || '#6366f1';
+    const isOccluded = track.isOccluded;
+
+    // Bounding box
+    ctx.beginPath();
+    if (isOccluded) ctx.setLineDash([6, 4]);
+    ctx.rect(bbox.x, bbox.y, bbox.width, bbox.height);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = isOccluded ? 0.4 : 0.7;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.setLineDash([]);
+
+    // ID label background
+    const label = `#${track.id} ${posture.isGood ? '✓' : '✗'} ${posture.score}`;
+    ctx.font = '600 12px "Inter", sans-serif';
+    const tw = ctx.measureText(label).width + 12;
+    const lh = 20;
+    const lx = bbox.x;
+    const ly = bbox.y - lh - 2;
+
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    const rr = 4;
+    ctx.moveTo(lx + rr, ly);
+    ctx.arcTo(lx + tw, ly, lx + tw, ly + lh, rr);
+    ctx.arcTo(lx + tw, ly + lh, lx, ly + lh, rr);
+    ctx.arcTo(lx, ly + lh, lx, ly, rr);
+    ctx.arcTo(lx, ly, lx + tw, ly, rr);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // ID text
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, lx + 6, ly + lh / 2);
+
+    // If occluded, draw ghost indicator
+    if (isOccluded) {
+        ctx.font = '500 10px "Inter", sans-serif';
+        ctx.fillStyle = '#f59e0b';
+        ctx.textAlign = 'center';
+        ctx.fillText('OCCLUDED', bbox.x + bbox.width / 2, bbox.y + bbox.height / 2);
+    }
+}
+
+/**
+ * Update the multi-person tracking panel in the sidebar.
+ */
+function updateTrackingPanel() {
+    if (!state.tracker) return;
+
+    const stats = state.tracker.getStats();
+    const el = (id) => document.getElementById(id);
+
+    el('track-active').textContent = stats.active;
+    el('track-confirmed').textContent = stats.confirmed;
+    el('track-lost').textContent = stats.lost;
+    el('track-archived').textContent = stats.archived;
+    el('tracker-status').textContent = `${stats.active} person${stats.active !== 1 ? 's' : ''}`;
+
+    // Build per-person cards
+    const personList = el('person-list');
+    if (!personList) return;
+
+    const tracks = state.activeTracks || [];
+    let html = '';
+    tracks.forEach(track => {
+        const color = track.color?.primary || '#6366f1';
+        const score = track.lastPosture?.score ?? '--';
+        const isGood = track.lastPosture?.isGood;
+        const scoreColor = isGood === true ? 'var(--success)' : isGood === false ? 'var(--danger)' : 'var(--text-secondary)';
+        const occClass = track.isOccluded ? ' occluded' : '';
+
+        let badges = '';
+        if (track.isOccluded) badges += '<span class="person-badge occluded">Occluded</span>';
+        if (track.state === 'tentative') badges += '<span class="person-badge new">New</span>';
+        if (track.age > 0 && track.hits === 1 && track.totalHits > 10) badges += '<span class="person-badge re-id">Re-ID</span>';
+
+        const goodPct = track.totalAnalyzed > 0
+            ? Math.round((track.goodFrames / track.totalAnalyzed) * 100) + '%'
+            : '--%';
+
+        html += `
+            <div class="person-card${occClass}">
+                <div class="person-color-dot" style="background:${color}; --dot-color:${color}"></div>
+                <span class="person-id">#${track.id}</span>
+                <div class="person-meta">${badges}<span>${goodPct} good</span></div>
+                <span class="person-score" style="color:${scoreColor}">${score}</span>
+            </div>
+        `;
+    });
+
+    personList.innerHTML = html || '<div style="color:var(--text-muted); font-size:0.8rem; padding:8px;">No persons detected</div>';
+}
+
+/**
+ * Update the temporal analysis panel.
+ */
+function updateTemporalPanel(primaryTrack) {
+    if (!primaryTrack?._temporalEngine) return;
+
+    const engine = primaryTrack._temporalEngine;
+    const features = engine.getTemporalFeatures();
+    const kpStability = engine.getKeypointStability();
+    const el = (id) => document.getElementById(id);
+
+    // Stability
+    const stability = Math.round(engine.stabilityScore * 100);
+    el('temporal-stability').textContent = stability + '%';
+    const barStab = el('bar-stability');
+    if (barStab) {
+        barStab.style.width = stability + '%';
+        barStab.style.background = stability > 70 ? 'var(--success)' : stability > 40 ? 'var(--warning)' : 'var(--danger)';
+    }
+
+    // Trend
+    if (features) {
+        const trend = features.slope;
+        const trendEl = el('temporal-trend');
+        if (trend > 0.5) {
+            trendEl.textContent = '↗ Improving';
+            trendEl.style.color = 'var(--success)';
+        } else if (trend < -0.5) {
+            trendEl.textContent = '↘ Declining';
+            trendEl.style.color = 'var(--danger)';
+        } else {
+            trendEl.textContent = '→ Stable';
+            trendEl.style.color = 'var(--text-secondary)';
+        }
+    }
+
+    // Predicted joints count
+    const predicted = kpStability.filter(ks => ks.isPredicted && ks.confidence > 0.1).length;
+    el('temporal-predicted').textContent = `${predicted}/17`;
+
+    // Window fill
+    const windowFill = engine.postureBuffer.length;
+    el('temporal-window').textContent = `${windowFill}/30`;
 }
 
 /**
@@ -577,18 +972,23 @@ function drawDataHUD(keypoints, posture) {
     const lineH = 16;
     const avgConf = keypoints.reduce((s, k) => s + k.score, 0) / keypoints.length;
     const visibleKps = keypoints.filter(k => k.score > CONFIG.poseNet.minConfidence).length;
+    const trackerStats = state.tracker ? state.tracker.getStats() : null;
+    const modelName = state.useMoveNet ? 'MoveNet MultiPose' : 'PoseNet MobileNetV1';
 
     const lines = [
-        `MODEL: PoseNet MobileNetV1`,
+        `MODEL: ${modelName}`,
         `FPS: ${drawDataHUD._fps}`,
+        `PERSONS: ${trackerStats ? trackerStats.active : 1}`,
         `KEYPOINTS: ${visibleKps}/17`,
         `AVG CONF: ${(avgConf * 100).toFixed(1)}%`,
+        `TRACKER: ByteTrack`,
+        `TEMPORAL: ${state.temporalEngines.size > 0 ? 'Active' : 'Off'}`,
         `FRAME: ${state.totalFrames}`,
         `CLASS: ${posture.isGood ? 'GOOD_POSTURE' : 'BAD_POSTURE'}`,
         `SCORE: ${posture.score}/100`,
     ];
 
-    const boxW = 195;
+    const boxW = 220;
     const boxH = lines.length * lineH + padding * 2;
     const boxX = 10;
     const boxY = 10;
@@ -1007,7 +1407,7 @@ DOM.startButton.addEventListener('click', async () => {
     try {
         await setupCamera();
         setStatus('Loading model...', '');
-        await loadPoseNet();
+        await loadDetector();
 
         // Clear loading
         clearInterval(state._loadingInterval);
@@ -1020,6 +1420,11 @@ DOM.startButton.addEventListener('click', async () => {
         state.isRunning = true;
         startSession();
         renderLoop();
+
+        // Start MoveNet async detection loop (runs in parallel with renderLoop)
+        if (state.useMoveNet) {
+            detectLoop();
+        }
     } catch (err) {
         console.error('Initialization failed:', err);
         setStatus('Error — see console', 'error');
