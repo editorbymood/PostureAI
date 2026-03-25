@@ -199,6 +199,62 @@
                     </div>
                 </div>
 
+                <!-- Action Intelligence -->
+                <div class="card action-card">
+                    <div class="card-header">
+                        <h2>🧠 Action Intelligence</h2>
+                        <span class="card-badge" id="action-status">Idle</span>
+                    </div>
+                    <div class="action-grid">
+                        <div class="action-main">
+                            <span class="action-icon" id="action-icon">🧍</span>
+                            <span class="action-label" id="action-label">Standing</span>
+                        </div>
+                        <div class="action-conf">
+                            <div class="conf-ring" id="action-conf-ring">
+                                <span id="action-conf-pct">0%</span>
+                            </div>
+                            <span class="conf-label">Confidence</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Rep Counter -->
+                <div class="card rep-card" id="rep-card" style="display: none;">
+                    <div class="card-header">
+                        <h2>🔢 Rep Counter</h2>
+                    </div>
+                    <div class="rep-display">
+                        <div class="rep-count" id="rep-count">0</div>
+                        <div class="rep-phase" id="rep-phase">READY</div>
+                    </div>
+                    <div class="rep-progress-container">
+                        <div class="rep-progress-bar" id="rep-progress"></div>
+                    </div>
+                </div>
+
+                <!-- 3D Vision -->
+                <div class="card vision-card">
+                    <div class="card-header">
+                        <h2>🌐 3D Motion Analysis</h2>
+                        <span class="card-badge" id="depth-reliability">Low</span>
+                    </div>
+                    <div class="vision-metrics">
+                        <div class="v-metric">
+                            <span class="v-label">Depth Coverage</span>
+                            <span class="v-value" id="depth-coverage">0%</span>
+                        </div>
+                        <div class="v-metric">
+                            <span class="v-label">Person Scale</span>
+                            <span class="v-value" id="person-scale">1.0x</span>
+                        </div>
+                        <div class="v-metric">
+                            <span class="v-label">True Angles</span>
+                            <span class="v-value" id="true-angles">Active</span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Temporal Analysis -->
                 <div class="card temporal-card">
                     <div class="card-header">
@@ -221,8 +277,8 @@
                             <span class="metric-value" id="temporal-predicted">0/17</span>
                         </div>
                         <div class="metric-item">
-                            <span class="metric-label">Window</span>
-                            <span class="metric-value" id="temporal-window">0/30</span>
+                            <span class="metric-label">Symmetry</span>
+                            <span class="metric-value" id="body-symmetry">--%</span>
                         </div>
                     </div>
                 </div>
@@ -253,6 +309,8 @@
     <!-- Advanced ML Modules -->
     <script src="tracker.js"></script>
     <script src="temporal.js"></script>
+    <script src="pose3d.js"></script>
+    <script src="intelligence.js"></script>
 
     <!-- Main Script -->
     <script src="app.js"></script>

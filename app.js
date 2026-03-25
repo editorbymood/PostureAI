@@ -37,6 +37,36 @@ const DOM = {
     resetBtn:       document.getElementById('reset-btn'),
     tipsContent:    document.getElementById('tips-content'),
     alertSound:     document.getElementById('alert-sound'),
+
+    // Action Intelligence
+    actionStatus:   document.getElementById('action-status'),
+    actionIcon:     document.getElementById('action-icon'),
+    actionLabel:    document.getElementById('action-label'),
+    actionConfPct:  document.getElementById('action-conf-pct'),
+    actionConfRing: document.getElementById('action-conf-ring'),
+
+    // Rep Counter
+    repCard:        document.getElementById('rep-card'),
+    repCountText:   document.getElementById('rep-count'),
+    repPhase:       document.getElementById('rep-phase'),
+    repProgress:    document.getElementById('rep-progress'),
+
+    // 3D/Vision
+    depthReliability:document.getElementById('depth-reliability'),
+    depthCoverage:   document.getElementById('depth-coverage'),
+    personScale:     document.getElementById('person-scale'),
+    bodySymmetry:    document.getElementById('body-symmetry'),
+    
+    // Original trackers
+    trackActive:    document.getElementById('track-active'),
+    trackConfirmed: document.getElementById('track-confirmed'),
+    trackLost:      document.getElementById('track-lost'),
+    trackArchived:  document.getElementById('track-archived'),
+    personList:     document.getElementById('person-list'),
+    temporalStability: document.getElementById('temporal-stability'),
+    barStability:   document.getElementById('bar-stability'),
+    temporalTrend:  document.getElementById('temporal-trend'),
+    temporalPredicted: document.getElementById('temporal-predicted'),
 };
 
 const ctx = DOM.canvas.getContext('2d');
@@ -49,7 +79,7 @@ const CONFIG = {
         imageScaleFactor: 0.3,
         outputStride:   16,
         flipHorizontal: true,          // ml5.js PoseNet needs this to mirror keypoints
-        minConfidence:  0.15,
+        minConfidence:  0.1,
         maxPoseDetections: 1,
         scoreThreshold: 0.5,
         nmsRadius:      20,
@@ -101,7 +131,9 @@ const state = {
     goodFrames:     0,
     alertCount:     0,
     scoreSum:       0,
+    intelligenceEngines: new Map(), // (trackId → IntelligenceEngine)
     lastAlertTime:  0,
+    startTime:      null,
     durationTimer:  null,
 
     // Previous score for trend
@@ -213,7 +245,7 @@ async function loadDetector() {
             state.detector = await poseDetection.createDetector(model, {
                 modelType: poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING,
                 enableTracking: false, // We use our own ByteTrack tracker
-                minPoseScore: 0.15,     // Lower threshold for varied poses
+                minPoseScore: 0.1,     // Lower threshold for varied poses
                 maxPoses: 6,
             });
 
@@ -444,8 +476,17 @@ function renderLoop() {
                     posture.issues = temporalResult.issues;
                     posture._stability = temporalResult.stability;
                     posture._temporalConfidence = temporalResult.confidence;
+                    posture._trend = temporalResult.trend;
                 }
             }
+
+            // ── Intelligence Layer Integration ──
+            if (!state.intelligenceEngines.has(track.id)) {
+                state.intelligenceEngines.set(track.id, new IntelligenceEngine());
+            }
+            const intel = state.intelligenceEngines.get(track.id);
+            const intelOutput = intel.process(smoothed);
+            track._intelligence = intelOutput;
 
             // Store posture on track for per-person cards
             track.lastPosture = posture;
@@ -453,58 +494,30 @@ function renderLoop() {
             if (posture.isGood) track.goodFrames++;
             track.totalAnalyzed++;
 
-            // Determine colors — use track color for skeleton
-            const trackColor = track.color?.primary || CONFIG.draw.goodColor;
-            const overridePosture = {
-                ...posture,
-                _trackColor: trackColor,
-                _trackId: track.id,
-                _isOccluded: track.isOccluded,
-            };
-
-            // Draw skeleton & keypoints with track-specific color
-            drawSkeleton(kps, overridePosture);
-            drawKeypoints(kps, overridePosture);
-
-            // Draw bounding box + ID label for this person
+            // Draw skeleton & keypoints
+            drawSkeleton(kps, { ...posture, _trackColor: track.color?.primary, _trackId: track.id, _isOccluded: track.isOccluded });
+            drawKeypoints(kps, { ...posture, _trackColor: track.color?.primary, _isOccluded: track.isOccluded });
             drawTrackBBox(track, posture);
-
-            // Draw predicted keypoint indicators
-            smoothed.forEach((kp, i) => {
-                if (kp.predicted && kp.score > 0.15) {
-                    // Draw dashed ring around predicted joints
-                    ctx.beginPath();
-                    ctx.setLineDash([3, 3]);
-                    ctx.arc(kp.x, kp.y, 12, 0, Math.PI * 2);
-                    ctx.strokeStyle = 'rgba(245, 158, 11, 0.5)';
-                    ctx.lineWidth = 1;
-                    ctx.stroke();
-                    ctx.setLineDash([]);
-                }
-            });
-
-            // Primary person → update sidebar UI
+            drawIntelligence(track, intelOutput);
+            
+            // Primary person (idx 0) → update advanced sidebar UI
             if (idx === 0) {
-                updatePostureBanner(posture);
-                updateScoreCard(posture.score);
-                updateMetrics(posture);
-                updateConfidence(kps);
-                updateSessionStats(posture);
-                updateTips(posture);
+                updateUI(posture, intelOutput);
             }
         });
 
-        // Draw multi-person data HUD
-        const primaryKps = tracks[0]._smoothedKeypoints || tracks[0].keypoints;
-        const primaryPosture = tracks[0].lastPosture || { score: 0, isGood: true };
+        // Draw multi-person data HUD (focused on primary)
+        const primaryTrack = tracks[0];
+        const primaryKps = primaryTrack._smoothedKeypoints || primaryTrack.keypoints;
+        const primaryPosture = primaryTrack.lastPosture || { score: 0, isGood: true };
         drawDataHUD(
             primaryKps.map((kp, i) => ({ score: kp.score, position: { x: kp.x, y: kp.y } })),
             primaryPosture
         );
 
-        // Update tracking panel
+        // Update tracking panels
         updateTrackingPanel();
-        updateTemporalPanel(tracks[0]);
+        updateTemporalPanel(primaryTrack);
 
     } else if (state.currentPose) {
         // Fallback for PoseNet (backward compat)
@@ -1436,3 +1449,215 @@ DOM.resetBtn.addEventListener('click', resetSession);
 
 // Hide the loading overlay initially (show start prompt instead)
 DOM.loadingOverlay.classList.add('hidden');
+
+/**
+ * ── CENTRALIZED UI UPDATE ──
+ * Orcherstrates all sidebar updates for the primary tracked person.
+ */
+function updateUI(posture, intel) {
+    if (!posture) {
+        DOM.postureBanner.classList.remove('good', 'bad', 'warning');
+        DOM.postureMessage.innerText = 'Waiting for detection...';
+        DOM.postureIcon.innerText = '⌛';
+        if (DOM.statusDot) DOM.statusDot.classList.remove('active');
+        if (DOM.statusText) DOM.statusText.innerText = 'Idle';
+        return;
+    }
+
+    // Status
+    if (DOM.statusDot) DOM.statusDot.classList.add('active');
+    if (DOM.statusText) DOM.statusText.innerText = 'Detecting';
+
+    // Core Posture UI
+    updatePostureBanner(posture);
+    updateScoreCard(posture.score);
+    updateMetrics(posture);
+    updateSessionStats(posture);
+    
+    // ── Action Intelligence UI ──
+    if (intel) {
+        const { action, reps, pose3D, symmetry } = intel;
+
+        if (DOM.actionLabel) DOM.actionLabel.innerText = action.label.split(' ').slice(1).join(' ') || action.label;
+        if (DOM.actionIcon) DOM.actionIcon.innerText  = action.icon;
+        if (DOM.actionStatus) DOM.actionStatus.innerText = action.holdFrames > 8 ? 'Confirmed' : 'HOLD...';
+        
+        const conf = Math.round(action.confidence * 100);
+        if (DOM.actionConfPct) DOM.actionConfPct.innerText = conf + '%';
+        if (DOM.actionConfRing) {
+             DOM.actionConfRing.style.background = `conic-gradient(var(--accent-primary) ${conf * 3.6}deg, rgba(99, 102, 241, 0.1) 0deg)`;
+        }
+
+        // Rep Counter
+        if (reps && reps.isCountable) {
+            if (DOM.repCard) DOM.repCard.style.display = 'block';
+            if (DOM.repCountText) DOM.repCountText.innerText = reps.reps;
+            if (DOM.repPhase) {
+                DOM.repPhase.innerText = reps.phase.replace('_', ' ').toUpperCase();
+                if (reps.phase === 'at_bottom') DOM.repPhase.style.background = 'var(--bad-color)';
+                else if (reps.phase === 'going_up') DOM.repPhase.style.background = 'var(--warning-color)';
+                else DOM.repPhase.style.background = 'rgba(99, 102, 241, 0.2)';
+            }
+            if (DOM.repProgress) DOM.repProgress.style.width = reps.progress + '%';
+        } else {
+            if (DOM.repCard) DOM.repCard.style.display = 'none';
+        }
+
+        // 3D Motion UI
+        if (DOM.depthReliability) {
+            DOM.depthReliability.innerText = pose3D.quality.reliability.toUpperCase();
+            DOM.depthReliability.style.color = pose3D.quality.reliability === 'high' ? 'var(--good-color)' : 'var(--warning-color)';
+        }
+        if (DOM.depthCoverage) DOM.depthCoverage.innerText = Math.round(pose3D.quality.depthCoverage * 100) + '%';
+        if (DOM.personScale) DOM.personScale.innerText = pose3D.quality.personScale.toFixed(2) + 'x';
+        if (DOM.bodySymmetry) DOM.bodySymmetry.innerText = Math.round(symmetry.overall * 100) + '%';
+
+        // Advanced Tips / Corrections
+        if (intel.correction) {
+            let tipHtml = '';
+            // Show correction tips first
+            intel.correction.corrections.forEach(c => {
+                tipHtml += `<div class="tip-item danger-tip">🎯 <strong>Correction:</strong> ${c.tip}</div>`;
+            });
+            // Then general tips
+            intel.correction.tips.forEach(tip => {
+                tipHtml += `<div class="tip-item active">✨ ${tip}</div>`;
+            });
+            
+            // If everything is good, add positive reinforcement
+            if (intel.correction.isIdeal && posture.isGood) {
+                tipHtml = `<div class="tip-item good-tip">✅ Perfect form maintained. Keep going!</div>` + tipHtml;
+            }
+            
+            if (tipHtml) DOM.tipsContent.innerHTML = tipHtml;
+            else updateTips(posture);
+        }
+    }
+
+    // Tracking Stats
+    if (DOM.trackActive) DOM.trackActive.innerText = state.activeTracks.length;
+    if (DOM.trackConfirmed) DOM.trackConfirmed.innerText = state.tracker.tracks.filter(t => t.isConfirmed()).length;
+    
+    // Temporal Stability
+    if (posture._stability && DOM.temporalStability) {
+        const stab = Math.round(posture._stability * 100);
+        DOM.temporalStability.innerText = stab + '%';
+        if (DOM.barStability) DOM.barStability.style.width = stab + '%';
+        if (DOM.temporalTrend) {
+            DOM.temporalTrend.innerText = posture._trend === 'up' ? 'Improving ↗' : (posture._trend === 'down' ? 'Degrading ↘' : 'Stable →');
+            DOM.temporalTrend.style.color = posture._trend === 'up' ? 'var(--good-color)' : (posture._trend === 'down' ? 'var(--bad-color)' : 'var(--text-muted)');
+        }
+    }
+}
+
+/**
+ * ── ADVANCED DRAWING ──
+ * Visualizes 3D depth, action labels, and rep progress rings.
+ */
+function drawIntelligence(track, intel) {
+    if (!intel) return;
+    const { pose3D, recoveredJoints, action, reps } = intel;
+    const kps = track._smoothedKeypoints || track.keypoints;
+    const color = track.color?.primary || CONFIG.draw.keypointColor;
+
+    // 1. Draw Depth Indicators (Subtle rings)
+    pose3D.keypoints3D.forEach((kp, i) => {
+        if (kp.score > 0.2) {
+            const zScale = 1 + (kp.z * 0.4); 
+            ctx.beginPath();
+            ctx.arc(kp.x, kp.y, 8 * zScale, 0, 2 * Math.PI);
+            ctx.strokeStyle = `rgba(99, 102, 241, ${0.1 * zScale})`;
+            ctx.setLineDash([2, 2]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+    });
+
+    // 2. Head Action Badge
+    const nose = kps[0];
+    if (nose && nose.score > 0.3) {
+        ctx.save();
+        ctx.font = '700 13px "Inter", sans-serif';
+        const label = `${action.icon} ${action.label}`;
+        const tw = ctx.measureText(label).width + 16;
+        const th = 24;
+        const tx = nose.x - tw/2;
+        const ty = nose.y - 60;
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        
+        // Draw rounded rect
+        const r = 6;
+        ctx.beginPath();
+        ctx.moveTo(tx + r, ty);
+        ctx.lineTo(tx + tw - r, ty);
+        ctx.quadraticCurveTo(tx + tw, ty, tx + tw, ty + r);
+        ctx.lineTo(tx + tw, ty + th - r);
+        ctx.quadraticCurveTo(tx + tw, ty + th, tx + tw - r, ty + th);
+        ctx.lineTo(tx + r, ty + th);
+        ctx.quadraticCurveTo(tx, ty + th, tx, ty + th - r);
+        ctx.lineTo(tx, ty + r);
+        ctx.quadraticCurveTo(tx, ty, tx + r, ty);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, nose.x, ty + th/2);
+        ctx.restore();
+    }
+
+    // 3. Occlusion Markers
+    kps.forEach(kp => {
+        if (kp._recovered) {
+            ctx.beginPath();
+            ctx.arc(kp.x, kp.y, 10, 0, 2 * Math.PI);
+            ctx.strokeStyle = 'var(--bad-color)';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([2, 2]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+    });
+
+    // 4. Rep Count Progression Ring on Active Joint
+    if (reps && reps.isCountable && reps.progress > 0) {
+        // Find the joint index by name
+        const jointName = reps.repTrackJoint.toUpperCase();
+        // Intelligence.js uses KPI maps which match PoseNet/MoveNet indices.
+        // We can just rely on the joint index if known, but let's be safe.
+        const jointIdx = KPI ? KPI[jointName] : null;
+        const joint = kps[jointIdx];
+
+        if (joint && joint.score > 0.2) {
+            ctx.save();
+            ctx.translate(joint.x, joint.y);
+            
+            // Background ring
+            ctx.beginPath();
+            ctx.arc(0, 0, 28, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+            ctx.lineWidth = 6;
+            ctx.stroke();
+
+            // Progress arc
+            ctx.beginPath();
+            ctx.arc(0, 0, 28, -Math.PI/2, (-Math.PI/2) + (Math.PI*2 * (reps.progress/100)));
+            ctx.strokeStyle = '#22c55e';
+            ctx.lineWidth = 6;
+            ctx.lineCap = 'round';
+            ctx.stroke();
+
+            // Number in center
+            ctx.font = '900 16px "Inter"';
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(reps.reps, 0, 0);
+            ctx.restore();
+        }
+    }
+}
